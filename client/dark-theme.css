@@ -1,0 +1,18 @@
+/* dark-theme.css */
+:root {
+  --bg-color: #121212;
+  --panel-bg: #1e1e1e;
+  --text-color: #ffffff;
+  --text-muted: #a0a0a0;
+  --accent-color: #0a84ff;
+  --accent-hover: #0066cc;
+  --border-color: #333333;
+  --canvas-bg: #1a1a1a;
+  --shadow-sm: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 10px 15px rgba(0, 0, 0, 0.2);
+  --msg-self-bg: rgba(10, 132, 255, 0.15);
+  --clear-btn-bg: #333333;
+  --clear-btn-hover: #444444;
+  --clear-btn-text: #ffffff;
+  --primary-brush: #ffffff;
+}

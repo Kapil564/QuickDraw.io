@@ -11,25 +11,31 @@
   <div class="app-container">
     <header class="topbar">
       <h1>Scribble Board</h1>
-      <div class="connection-status">
-        <span class="status-indicator"></span>
-        <span class="status-text">Connecting...</span>
+      <div class="topbar-right">
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">☀️</button>
+        <div class="connection-status">
+          <span class="status-indicator"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
       </div>
     </header>
 
     <main class="main-content">
-      <div class="canvas-container">
-        <canvas id="drawing-board"></canvas>
-      </div>
-      
-      <div class="sidebar">
+      <!-- Board Area (Left Side Now) -->
+      <div class="board-area">
+        <div class="canvas-container">
+          <canvas id="drawing-board"></canvas>
+        </div>
+        
         <div class="tools-panel">
-          <h3>Tools</h3>
-          
+          <div class="tool-group mode-selector">
+            <button id="mode-brush" class="mode-btn active" title="Brush">🖌️</button>
+            <button id="mode-fill" class="mode-btn" title="Fill">🪣</button>
+          </div>
+
           <div class="tool-group">
-            <label>Color</label>
             <div class="colors">
-              <button class="color-btn active" style="background-color: #ffffff;" data-color="#ffffff"></button>
+              <button class="color-btn active color-primary" data-color="primary"></button>
               <button class="color-btn" style="background-color: #ff3b30;" data-color="#ff3b30"></button>
               <button class="color-btn" style="background-color: #ff9500;" data-color="#ff9500"></button>
               <button class="color-btn" style="background-color: #4cd964;" data-color="#4cd964"></button>
@@ -40,24 +46,28 @@
             </div>
           </div>
           
-          <div class="tool-group">
+          <div class="tool-group size-group">
             <label>Brush Size (<span id="brush-size-val">5</span>px)</label>
             <input type="range" id="brush-size" min="1" max="50" value="5">
           </div>
           
           <div class="actions">
-            <button id="clear-btn" class="action-btn clear-btn">Clear Canvas</button>
+            <div class="action-row">
+              <button id="undo-btn" class="action-btn secondary-btn" title="Undo">↩️</button>
+              <button id="clear-btn" class="action-btn clear-btn" title="Delete">🗑️</button>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div class="chat-panel">
-          <h3>Messages</h3>
-          <div class="messages" id="messages-container"></div>
-          <form class="chat-input-form" id="chat-form">
-            <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
-            <button type="submit">Send</button>
-          </form>
-        </div>
+      <!-- Chat Panel (Right Side Now) -->
+      <div class="chat-panel">
+        <h3>Messages</h3>
+        <div class="messages" id="messages-container"></div>
+        <form class="chat-input-form" id="chat-form">
+          <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
       </div>
     </main>
   </div>

@@ -36,6 +36,16 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("clear");
   });
 
+  // Listen for undo events
+  socket.on("undo", (data) => {
+    socket.broadcast.emit("undo", data);
+  });
+
+  // Listen for fill events
+  socket.on("fill", (data) => {
+    socket.broadcast.emit("fill", data);
+  });
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
