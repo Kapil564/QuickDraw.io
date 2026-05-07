@@ -1,77 +1,15 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scribble - Realtime Drawing Board</title>
-  <link rel="stylesheet" href="./style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-</head>
-<body>
-  <div class="app-container">
-    <header class="topbar">
-      <h1>Scribble Board</h1>
-      <div class="topbar-right">
-        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">☀️</button>
-        <div class="connection-status">
-          <span class="status-indicator"></span>
-          <span class="status-text">Connecting...</span>
-        </div>
-      </div>
-    </header>
-
-    <main class="main-content">
-      <!-- Board Area (Left Side Now) -->
-      <div class="board-area">
-        <div class="canvas-container">
-          <canvas id="drawing-board"></canvas>
-        </div>
-        
-        <div class="tools-panel">
-          <div class="tool-group mode-selector">
-            <button id="mode-brush" class="mode-btn active" title="Brush">🖌️</button>
-            <button id="mode-fill" class="mode-btn" title="Fill">🪣</button>
-          </div>
-
-          <div class="tool-group">
-            <div class="colors">
-              <button class="color-btn active color-primary" data-color="primary"></button>
-              <button class="color-btn" style="background-color: #ff3b30;" data-color="#ff3b30"></button>
-              <button class="color-btn" style="background-color: #ff9500;" data-color="#ff9500"></button>
-              <button class="color-btn" style="background-color: #4cd964;" data-color="#4cd964"></button>
-              <button class="color-btn" style="background-color: #5ac8fa;" data-color="#5ac8fa"></button>
-              <button class="color-btn" style="background-color: #007aff;" data-color="#007aff"></button>
-              <button class="color-btn" style="background-color: #5856d6;" data-color="#5856d6"></button>
-              <input type="color" id="color-picker" value="#ffffff" class="color-picker">
-            </div>
-          </div>
-          
-          <div class="tool-group size-group">
-            <label>Brush Size (<span id="brush-size-val">5</span>px)</label>
-            <input type="range" id="brush-size" min="1" max="50" value="5">
-          </div>
-          
-          <div class="actions">
-            <div class="action-row">
-              <button id="undo-btn" class="action-btn secondary-btn" title="Undo">↩️</button>
-              <button id="clear-btn" class="action-btn clear-btn" title="Delete">🗑️</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Chat Panel (Right Side Now) -->
-      <div class="chat-panel">
-        <h3>Messages</h3>
-        <div class="messages" id="messages-container"></div>
-        <form class="chat-input-form" id="chat-form">
-          <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
-          <button type="submit">Send</button>
-        </form>
-      </div>
-    </main>
-  </div>
-  
-  <script type="module" src="/main.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Scribble — a real-time multiplayer drawing and guessing game" />
+    <title>Scribble - Realtime Drawing Board</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
