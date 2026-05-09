@@ -2,8 +2,8 @@ import type { ReactNode, RefObject } from 'react';
 import type { DrawingMode } from '../types';
 
 interface DrawingBoardProps {
-  canvasRef: RefObject<HTMLCanvasElement>;
-  containerRef: RefObject<HTMLDivElement>;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
   mode: DrawingMode;
   children?: ReactNode;
 }
