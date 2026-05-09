@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { DrawEvent, DrawingMode, FillEvent, UndoEvent, ThemeMode } from '../types';
 
@@ -10,33 +10,41 @@ interface UseCanvasOptions {
   theme: ThemeMode;
 }
 
-export function useCanvas({ socket, color, brushSize, mode, theme }: UseCanvasOptions) {
+export function useCanvas({ socket, color, brushSize, mode }: UseCanvasOptions) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Performance-critical state stored in refs (avoids re-renders during drawing)
+  const [mounted, setMounted] = useState(false);
+
   const isDrawing = useRef(false);
-  const posX = useRef(0);
-  const posY = useRef(0);
+  const lastX = useRef(0);
+  const lastY = useRef(0);
   const history = useRef<string[]>([]);
 
-  // Mirror props into refs so event handlers always see latest values
   const colorRef = useRef(color);
   const brushSizeRef = useRef(brushSize);
   const modeRef = useRef(mode);
-  const themeRef = useRef(theme);
 
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { brushSizeRef.current = brushSize; }, [brushSize]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { themeRef.current = theme; }, [theme]);
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (canvasRef.current && containerRef.current) {
+      setMounted(true);
+      return;
+    }
+    const id = setInterval(() => {
+      if (canvasRef.current && containerRef.current) {
+        setMounted(true);
+        clearInterval(id);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
 
   const resolveColor = useCallback((c: string) => {
-    return c === 'primary'
-      ? (themeRef.current === 'light' ? '#1c1c1e' : '#ffffff')
-      : c;
+    return c === 'primary' ? '#1a1a2e' : c;
   }, []);
 
   const saveHistory = useCallback(() => {
@@ -50,17 +58,32 @@ export function useCanvas({ socket, color, brushSize, mode, theme }: UseCanvasOp
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-    if (!dataUrl) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+
+    const dpr = window.devicePixelRatio || 1;
+
+    if (!dataUrl) {
+      
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+      return;
+    }
+
     const img = new Image();
     img.onload = () => {
+      
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      ctx.scale(dpr, dpr);
     };
     img.src = dataUrl;
   }, []);
 
-  const drawLine = useCallback(
-    (x0: number, y0: number, x1: number, y1: number, lineColor: string, size: number, emit: boolean) => {
+    const drawSegment = useCallback(
+    (x0: number, y0: number, x1: number, y1: number, lineColor: string, size: number) => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (!canvas || !ctx) return;
@@ -73,13 +96,8 @@ export function useCanvas({ socket, color, brushSize, mode, theme }: UseCanvasOp
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.stroke();
-      ctx.closePath();
-
-      if (!emit) return;
-      const w = canvas.width, h = canvas.height;
-      socket.emit('draw', { x0: x0 / w, y0: y0 / h, x1: x1 / w, y1: y1 / h, color: lineColor, size });
     },
-    [socket, resolveColor]
+    [resolveColor],
   );
 
   const fillCanvas = useCallback(
@@ -87,14 +105,13 @@ export function useCanvas({ socket, color, brushSize, mode, theme }: UseCanvasOp
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (!canvas || !ctx) return;
+      
       ctx.fillStyle = resolveColor(fillColor);
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
       if (emit) socket.emit('fill', { color: fillColor });
     },
-    [socket, resolveColor]
+    [socket, resolveColor],
   );
-
-  // ── Public actions (called by ToolsPanel) ─────────────────────────────────
 
   const undo = useCallback(() => {
     if (history.current.length > 0) {
@@ -106,127 +123,218 @@ export function useCanvas({ socket, color, brushSize, mode, theme }: UseCanvasOp
 
   const clearCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
+    if (!canvas) return;
     saveHistory();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+    }
     socket.emit('clear');
   }, [socket, saveHistory]);
 
-  // ── Canvas resize (ResizeObserver) ────────────────────────────────────────
-
   useEffect(() => {
+    if (!mounted) return;                       
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
+    let resizeTimeout: ReturnType<typeof setTimeout>;
+
     const resize = () => {
-      const rect = container.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
+      const cssWidth = container.clientWidth;
+      const cssHeight = container.clientHeight;
+      if (cssWidth === 0 || cssHeight === 0) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const targetW = Math.round(cssWidth * dpr);
+      const targetH = Math.round(cssHeight * dpr);
+      if (canvas.width === targetW && canvas.height === targetH) return;
+
+      const snapshot = canvas.toDataURL();
+
+      canvas.style.width = cssWidth + 'px';
+      canvas.style.height = cssHeight + 'px';
+
+      canvas.width = targetW;
+      canvas.height = targetH;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.scale(dpr, dpr);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, cssWidth, cssHeight);
+      img.src = snapshot;
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
     };
 
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(() => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(resize, 50);
+    });
     observer.observe(container);
-    resize();
-    return () => observer.disconnect();
-  }, []);
+    resize();                                   
 
-  // ── Mouse & Touch events ─────────────────────────────────────────────────
+    return () => {
+      observer.disconnect();
+      clearTimeout(resizeTimeout);
+    };
+  }, [mounted]);                                
 
   useEffect(() => {
+    if (!mounted) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const getPos = (e: MouseEvent | TouchEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      if ('clientX' in e) return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      if ('touches' in e && e.touches.length > 0)
-        return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-      return { x: 0, y: 0 };
-    };
+    function getXY(e: MouseEvent | TouchEvent) {
+      const rect = canvas!.getBoundingClientRect();
+      let clientX: number, clientY: number;
 
-    const onDown = (e: MouseEvent | TouchEvent) => {
+      if ('touches' in e) {
+        const t = e.touches[0] ?? e.changedTouches[0];
+        clientX = t.clientX;
+        clientY = t.clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      };
+    }
+
+    function onDown(e: MouseEvent | TouchEvent) {
+      if ('button' in e && e.button !== 0) return;
+
       saveHistory();
-      if (modeRef.current === 'fill') { fillCanvas(colorRef.current, true); return; }
+
+      if (modeRef.current === 'fill') {
+        fillCanvas(colorRef.current, true);
+        return;
+      }
+
       isDrawing.current = true;
-      const p = getPos(e);
-      posX.current = p.x;
-      posY.current = p.y;
-    };
+      const { x, y } = getXY(e);
+      lastX.current = x;
+      lastY.current = y;
 
-    const onUp = (e: MouseEvent | TouchEvent) => {
+      drawSegment(x, y, x, y, colorRef.current, brushSizeRef.current);
+      socket.emit('draw', {
+        x0: x / canvas!.clientWidth,
+        y0: y / canvas!.clientHeight,
+        x1: x / canvas!.clientWidth,
+        y1: y / canvas!.clientHeight,
+        color: colorRef.current,
+        size: brushSizeRef.current,
+      });
+    }
+
+    function onMove(e: MouseEvent | TouchEvent) {
       if (!isDrawing.current) return;
+      if (e.cancelable) e.preventDefault();
+
+      const { x, y } = getXY(e);
+      if (x === lastX.current && y === lastY.current) return;
+
+      drawSegment(lastX.current, lastY.current, x, y, colorRef.current, brushSizeRef.current);
+      socket.emit('draw', {
+        x0: lastX.current / canvas!.clientWidth,
+        y0: lastY.current / canvas!.clientHeight,
+        x1: x / canvas!.clientWidth,
+        y1: y / canvas!.clientHeight,
+        color: colorRef.current,
+        size: brushSizeRef.current,
+      });
+
+      lastX.current = x;
+      lastY.current = y;
+    }
+
+    function onUp() {
       isDrawing.current = false;
-      const p = getPos(e);
-      drawLine(posX.current, posY.current, p.x, p.y, colorRef.current, brushSizeRef.current, true);
-    };
+    }
 
-    const onMove = (e: MouseEvent | TouchEvent) => {
-      if (!isDrawing.current) return;
-      const p = getPos(e);
-      drawLine(posX.current, posY.current, p.x, p.y, colorRef.current, brushSizeRef.current, true);
-      posX.current = p.x;
-      posY.current = p.y;
-    };
-
-    // Mouse
-    canvas.addEventListener('mousedown', onDown);
-    canvas.addEventListener('mouseup', onUp);
-    canvas.addEventListener('mouseout', onUp as EventListener);
-    canvas.addEventListener('mousemove', onMove);
-
-    // Touch
     const opts: AddEventListenerOptions = { passive: false };
-    const wrap = (fn: (e: MouseEvent | TouchEvent) => void) =>
-      (e: TouchEvent) => { e.preventDefault(); fn(e); };
-    const tStart = wrap(onDown), tEnd = wrap(onUp), tMove = wrap(onMove);
 
-    canvas.addEventListener('touchstart', tStart, opts);
-    canvas.addEventListener('touchend', tEnd, opts);
-    canvas.addEventListener('touchcancel', tEnd, opts);
-    canvas.addEventListener('touchmove', tMove, opts);
+    canvas.addEventListener('mousedown', onDown);
+    canvas.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+
+    canvas.addEventListener('touchstart', onDown, opts);
+    canvas.addEventListener('touchmove', onMove, opts);
+    window.addEventListener('touchend', onUp);
 
     return () => {
       canvas.removeEventListener('mousedown', onDown);
-      canvas.removeEventListener('mouseup', onUp);
-      canvas.removeEventListener('mouseout', onUp as EventListener);
       canvas.removeEventListener('mousemove', onMove);
-      canvas.removeEventListener('touchstart', tStart);
-      canvas.removeEventListener('touchend', tEnd);
-      canvas.removeEventListener('touchcancel', tEnd);
-      canvas.removeEventListener('touchmove', tMove);
-    };
-  }, [saveHistory, fillCanvas, drawLine]);
+      window.removeEventListener('mouseup', onUp);
 
-  // ── Incoming socket events ────────────────────────────────────────────────
+      canvas.removeEventListener('touchstart', onDown);
+      canvas.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+    };
+  }, [mounted, drawSegment, fillCanvas, saveHistory, socket]);
 
   useEffect(() => {
-    const onDraw = (data: DrawEvent) => {
+    function onRemoteDraw(data: DrawEvent) {
       const c = canvasRef.current;
       if (!c) return;
-      drawLine(data.x0 * c.width, data.y0 * c.height, data.x1 * c.width, data.y1 * c.height, data.color, data.size, false);
-    };
-    const onClear = () => {
+      drawSegment(
+        data.x0 * c.clientWidth,
+        data.y0 * c.clientHeight,
+        data.x1 * c.clientWidth,
+        data.y1 * c.clientHeight,
+        data.color,
+        data.size,
+      );
+    }
+
+    function onRemoteClear() {
       saveHistory();
       const c = canvasRef.current;
-      c?.getContext('2d')?.clearRect(0, 0, c.width, c.height);
-    };
-    const onUndo = (data: UndoEvent) => restoreCanvas(data?.imgData);
-    const onFill = (data: FillEvent) => { saveHistory(); fillCanvas(data.color, false); };
+      const ctx = c?.getContext('2d');
+      if (c && ctx) {
+        const dpr = window.devicePixelRatio || 1;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.scale(dpr, dpr);
+      }
+    }
 
-    socket.on('draw', onDraw);
-    socket.on('clear', onClear);
-    socket.on('undo', onUndo);
-    socket.on('fill', onFill);
+    function onRemoteUndo(data: UndoEvent) {
+      restoreCanvas(data?.imgData);
+    }
+
+    function onRemoteFill(data: FillEvent) {
+      saveHistory();
+      fillCanvas(data.color, false);
+    }
+
+    socket.on('draw', onRemoteDraw);
+    socket.on('clear', onRemoteClear);
+    socket.on('undo', onRemoteUndo);
+    socket.on('fill', onRemoteFill);
 
     return () => {
-      socket.off('draw', onDraw);
-      socket.off('clear', onClear);
-      socket.off('undo', onUndo);
-      socket.off('fill', onFill);
+      socket.off('draw', onRemoteDraw);
+      socket.off('clear', onRemoteClear);
+      socket.off('undo', onRemoteUndo);
+      socket.off('fill', onRemoteFill);
     };
-  }, [socket, drawLine, saveHistory, restoreCanvas, fillCanvas]);
+  }, [socket, drawSegment, saveHistory, restoreCanvas, fillCanvas]);
 
   return { canvasRef, containerRef, undo, clearCanvas };
 }

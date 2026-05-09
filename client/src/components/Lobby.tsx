@@ -29,29 +29,31 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
     setBlobs(newBlobs);
   }, []);
 
-  const handleCreate = () => {
+  // ── Quick Match: find/create a public room ────────────────────────────────
+  const handleQuickMatch = () => {
     if (!name.trim()) return setError('Please enter your name');
     if (!isConnected) return setError('Not connected to server');
 
     setIsJoining(true);
-    socket.emit('create-room', { playerName: name }, (response: any) => {
+    setError('');
+    socket.emit('quick-match', { playerName: name }, (response: any) => {
       setIsJoining(false);
       if (response.success) {
         onJoin(response.roomID, response.player);
       } else {
-        setError('Failed to create room');
+        setError(response.error || 'Matchmaking failed — try again!');
       }
     });
   };
 
-  const handleJoin = (e?: React.FormEvent) => {
+  const handleJoinByCode = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!name.trim()) return setError('Please enter your name');
-    // If no roomID is provided, create a public room (or just require it for now)
-    if (!roomID.trim()) return handleCreate(); // Map empty play to create for now, or you could do random matchmaking
+    if (!roomID.trim()) return handleQuickMatch(); 
     if (!isConnected) return setError('Not connected to server');
 
     setIsJoining(true);
+    setError('');
     socket.emit('join-room', { roomID: roomID.toUpperCase(), playerName: name }, (response: any) => {
       setIsJoining(false);
       if (response.success) {
@@ -62,9 +64,25 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
     });
   };
 
+  const handleCreatePrivate = () => {
+    if (!name.trim()) return setError('Please enter your name');
+    if (!isConnected) return setError('Not connected to server');
+
+    setIsJoining(true);
+    setError('');
+    socket.emit('create-room', { playerName: name }, (response: any) => {
+      setIsJoining(false);
+      if (response.success) {
+        onJoin(response.roomID, response.player);
+      } else {
+        setError(response.error || 'Failed to create private room');
+      }
+    });
+  };
+
   return (
     <div className="lobby-wrapper">
-      {/* Background Layer */}
+      
       <div className="bg-layer">
         {['✏️', '🌟', '🖍️', '🎨', '🌈', '⭐', '💫', '🖌️'].map((emoji, i) => (
           <div key={`doodle-${i}`} className={`doodle doodle-${i}`}>{emoji}</div>
@@ -85,9 +103,8 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
         ))}
       </div>
 
-      {/* Main Card */}
       <div className="main-card">
-        {/* Corner Stickers */}
+        
         <div className="sticker sticker-tl">🌟</div>
         <div className="sticker sticker-tr">✨</div>
         <div className="sticker sticker-bl">🎯</div>
@@ -136,8 +153,8 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
                 maxLength={6}
               />
             </div>
-            <button className="btn-play" onClick={handleJoin} disabled={isJoining || !name}>
-              PLAY! 🚀
+            <button className="btn-play" onClick={handleJoinByCode} disabled={isJoining || !name}>
+              {isJoining ? '⏳' : 'PLAY! 🚀'}
             </button>
           </div>
         </div>
@@ -146,7 +163,7 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
           <span>OR</span>
         </div>
 
-        <button className="btn-private" onClick={handleCreate} disabled={isJoining || !name}>
+        <button className="btn-private" onClick={handleCreatePrivate} disabled={isJoining || !name}>
           🔒 Create a Private Room
         </button>
 
@@ -155,7 +172,6 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
         </div>
       </div>
 
-      {/* Fun Jokes Section to fill the scroll space! */}
       <div className="jokes-container">
         <h3>🎨 Artist Jokes While You Wait...</h3>
         <div className="joke-card">

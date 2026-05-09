@@ -4,7 +4,11 @@ import type { DisplayMessage, ChatMessageData } from '../types';
 
 let msgIdCounter = 0;
 
-export default function ChatPanel() {
+interface ChatPanelProps {
+  playerName?: string;
+}
+
+export default function ChatPanel({ playerName }: ChatPanelProps) {
   const { socket } = useSocketContext();
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
@@ -15,7 +19,6 @@ export default function ChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Listen for incoming messages
   useEffect(() => {
     const onMessage = (data: any) => {
       if (typeof data === 'string') {
@@ -23,8 +26,13 @@ export default function ChatPanel() {
       } else if (data.type === 'system') {
         setMessages(prev => [...prev, { id: String(++msgIdCounter), text: data.text, type: 'system' }]);
       } else {
-        const type = data.senderId === socket.id ? 'self' : 'other';
-        setMessages(prev => [...prev, { id: String(++msgIdCounter), text: data.text, type }]);
+        const isSelf = data.senderId === socket.id;
+        setMessages(prev => [...prev, {
+          id: String(++msgIdCounter),
+          text: data.text,
+          type: isSelf ? 'self' : 'other',
+          senderName: isSelf ? undefined : (data.senderName || 'Unknown'),
+        }]);
       }
     };
 
@@ -32,7 +40,6 @@ export default function ChatPanel() {
     return () => { socket.off('message', onMessage); };
   }, [socket]);
 
-  // System messages for connect/disconnect
   useEffect(() => {
     const onConnect = () => {
       setMessages(prev => [...prev, { id: String(++msgIdCounter), text: 'Connected to the server!', type: 'system' }]);
@@ -52,7 +59,12 @@ export default function ChatPanel() {
     if (!text) return;
 
     const messageData: ChatMessageData = { text, senderId: socket.id! };
-    setMessages(prev => [...prev, { id: String(++msgIdCounter), text, type: 'self' }]);
+    setMessages(prev => [...prev, {
+      id: String(++msgIdCounter),
+      text,
+      type: 'self',
+      senderName: playerName || 'You',
+    }]);
     socket.emit('message', messageData);
     setInput('');
   };
@@ -62,8 +74,11 @@ export default function ChatPanel() {
       <h3>Messages</h3>
       <div className="messages" id="messages-container">
         {messages.map((msg) => (
-          <div key={msg.id} className={`message ${msg.type === 'self' ? 'self' : ''} ${msg.type === 'system' ? 'system' : ''}`}>
-            {msg.text}
+          <div key={msg.id} className={`message ${msg.type}`}>
+            {msg.type !== 'system' && msg.senderName && (
+              <span className="message-sender">{msg.senderName}</span>
+            )}
+            <span className="message-text">{msg.text}</span>
           </div>
         ))}
         <div ref={messagesEndRef} />

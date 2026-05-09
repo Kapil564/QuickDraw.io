@@ -3,25 +3,41 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import crypto from "crypto";
+import { pickRandomWords } from "./words.js";
 
 const app = express();
 const httpServer = createServer(app);
 
-// Enable CORS so the client can connect
 const allowedOrigins = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',') : "*";
 const io = new Server(httpServer, { 
   cors: {
-    origin: allowedOrigins, // Adjust this to your client URL in production
+    origin: allowedOrigins, 
     methods: ["GET", "POST"]
   }
 });
 
-// ─── Room & Player State ──────────────────────────────────────────────────────
-// rooms Map: roomID -> { players: Map<socketId, { name, id, avatarColor }>, createdAt }
 const rooms = new Map();
 
+const MAX_PLAYERS_PER_ROOM = 8;
+const WORD_CHOOSE_TIMEOUT = 15000; 
+const ROUND_DRAW_TIMEOUT = 60000; 
+
+function createGameState() {
+  return {
+    state: "waiting",    
+    currentDrawer: null, 
+    currentWord: null,   
+    wordChoices: [],     
+    round: 0,
+    usedWords: new Set(),
+    chooseTimer: null,   
+    roundTimer: null,
+    timeLeft: 0,
+  };
+}
+
 function generateRoomID() {
-  // 6-char hex string
+  
   return crypto.randomBytes(3).toString("hex").toUpperCase();
 }
 
@@ -31,7 +47,6 @@ function getRoomPlayers(roomID) {
   return Array.from(room.players.values());
 }
 
-// Generate a consistent avatar color from the player name
 function avatarColor(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -41,30 +56,260 @@ function avatarColor(name) {
   return `hsl(${hue}, 65%, 55%)`;
 }
 
-// ─── Socket.IO Connection Handler ─────────────────────────────────────────────
+function findAvailablePublicRoom() {
+  for (const [roomID, room] of rooms) {
+    if (room.visibility === "public" && room.players.size < room.maxPlayers) {
+      return roomID;
+    }
+  }
+  return null;
+}
+
+function startNextTurn(roomID) {
+  const room = rooms.get(roomID);
+  if (!room) return;
+  const game = room.game;
+  const players = Array.from(room.players.values());
+
+  if (players.length < 2) {
+    io.to(roomID).emit("message", { text: `Not enough players to continue. Waiting for more...`, type: "system" });
+    game.state = "waiting";
+    game.currentDrawer = null;
+    io.to(roomID).emit("game-state", { state: "waiting" });
+    return;
+  }
+
+  let nextIndex = 0;
+  if (game.currentDrawer) {
+    const currentIndex = players.findIndex(p => p.id === game.currentDrawer);
+    if (currentIndex !== -1) {
+      nextIndex = (currentIndex + 1) % players.length;
+      if (nextIndex === 0) game.round += 1;
+    } else {
+      game.round += 1;
+    }
+  } else {
+    game.round = 1;
+  }
+
+  const nextDrawer = players[nextIndex];
+  game.currentDrawer = nextDrawer.id;
+  game.state = "choosing";
+  game.currentWord = null;
+  
+  if (game.roundTimer) clearTimeout(game.roundTimer);
+  if (game.chooseTimer) clearTimeout(game.chooseTimer);
+
+  let choices = pickRandomWords(3);
+  let attempts = 0;
+  while (choices.some(c => game.usedWords.has(c.word)) && attempts < 10) {
+    choices = pickRandomWords(3);
+    attempts++;
+  }
+  game.wordChoices = choices;
+
+  io.to(nextDrawer.id).emit("word-choices", { choices, timeLimit: WORD_CHOOSE_TIMEOUT });
+
+  io.to(roomID).emit("game-state", {
+    state: "choosing",
+    drawerId: nextDrawer.id,
+    drawerName: nextDrawer.name,
+    round: game.round,
+  });
+
+  io.to(roomID).emit("message", {
+    text: `🎮 Round ${game.round}! ${nextDrawer.name} is choosing a word...`,
+    type: "system"
+  });
+
+  game.chooseTimer = setTimeout(() => {
+    if (game.state === "choosing" && game.currentDrawer === nextDrawer.id) {
+      const autoChoice = game.wordChoices[0];
+      startDrawingPhase(roomID, autoChoice.word);
+      io.to(roomID).emit("message", {
+        text: `Time's up! A word was auto-selected. Start drawing!`,
+        type: "system"
+      });
+    }
+  }, WORD_CHOOSE_TIMEOUT);
+}
+
+function startDrawingPhase(roomID, word) {
+  const room = rooms.get(roomID);
+  if (!room) return;
+  const game = room.game;
+  const player = room.players.get(game.currentDrawer);
+
+  if (game.chooseTimer) {
+    clearTimeout(game.chooseTimer);
+    game.chooseTimer = null;
+  }
+
+  game.currentWord = word;
+  game.usedWords.add(word);
+  game.state = "drawing";
+  game.wordChoices = [];
+  game.timeLeft = ROUND_DRAW_TIMEOUT / 1000;
+
+  const hint = word.replace(/[a-zA-Z]/g, "_");
+
+  io.to(game.currentDrawer).emit("word-assigned", { word });
+
+  io.to(roomID).emit("game-state", {
+    state: "drawing",
+    drawerId: game.currentDrawer,
+    drawerName: player?.name || "Unknown",
+    round: game.round,
+    hint,
+    wordLength: word.length,
+    timeLeft: game.timeLeft
+  });
+
+  io.to(roomID).emit("clear"); 
+
+  game.roundTimer = setTimeout(() => {
+    endTurn(roomID, "time-up");
+  }, ROUND_DRAW_TIMEOUT);
+}
+
+function endTurn(roomID, reason) {
+  const room = rooms.get(roomID);
+  if (!room) return;
+  const game = room.game;
+
+  if (game.roundTimer) {
+    clearTimeout(game.roundTimer);
+    game.roundTimer = null;
+  }
+  if (game.chooseTimer) {
+    clearTimeout(game.chooseTimer);
+    game.chooseTimer = null;
+  }
+
+  game.state = "roundEnd";
+
+  io.to(roomID).emit("game-state", {
+    state: "roundEnd",
+    currentWord: game.currentWord
+  });
+
+  io.to(roomID).emit("message", {
+    text: `Time's up! The word was: ${game.currentWord}`,
+    type: "system"
+  });
+
+  setTimeout(() => {
+    if (rooms.has(roomID)) {
+      startNextTurn(roomID);
+    }
+  }, 5000);
+}
+
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
 
   let currentRoom = null;
 
-  // ── Create Room ──────────────────────────────────────────────────────────────
+  function addPlayerToRoom(roomID, playerName) {
+    const room = rooms.get(roomID);
+    if (!room) return null;
+
+    const role = room.players.size === 0 ? "admin" : "player";
+
+    const player = {
+      id: socket.id,
+      name: playerName,
+      avatarColor: avatarColor(playerName),
+      role
+    };
+
+    room.players.set(socket.id, player);
+    socket.join(roomID);
+    currentRoom = roomID;
+
+    return player;
+  }
+
+  socket.on("quick-match", ({ playerName }, callback) => {
+    if (!playerName || !playerName.trim()) {
+      return typeof callback === "function" && callback({ success: false, error: "Name is required." });
+    }
+
+    let roomID = findAvailablePublicRoom();
+    let isNewRoom = false;
+
+    if (!roomID) {
+      roomID = generateRoomID();
+      rooms.set(roomID, {
+        players: new Map(),
+        visibility: "public",
+        maxPlayers: MAX_PLAYERS_PER_ROOM,
+        createdAt: Date.now(),
+        game: createGameState()
+      });
+      isNewRoom = true;
+      console.log(`Public room ${roomID} created for quick-match`);
+    }
+
+    const room = rooms.get(roomID);
+
+    if (room.players.size >= room.maxPlayers) {
+      
+      const retryID = findAvailablePublicRoom();
+      if (retryID) {
+        roomID = retryID;
+      } else {
+        roomID = generateRoomID();
+        rooms.set(roomID, {
+          players: new Map(),
+          visibility: "public",
+          maxPlayers: MAX_PLAYERS_PER_ROOM,
+          createdAt: Date.now(),
+          game: createGameState()
+        });
+        console.log(`Public room ${roomID} created (retry) for quick-match`);
+      }
+    }
+
+    const player = addPlayerToRoom(roomID, playerName);
+
+    console.log(`${playerName} quick-matched into room ${roomID}${isNewRoom ? ' (new)' : ''}`);
+
+    if (typeof callback === "function") {
+      callback({ success: true, roomID, player });
+    }
+
+    if (!isNewRoom) {
+      socket.to(roomID).emit("message", { text: `${playerName} joined the room!`, type: "system" });
+    }
+    io.to(roomID).emit("player-list", getRoomPlayers(roomID));
+  });
+
   socket.on("create-room", ({ playerName }, callback) => {
+    if (!playerName || !playerName.trim()) {
+      return typeof callback === "function" && callback({ success: false, error: "Name is required." });
+    }
+
     const roomID = generateRoomID();
     const player = {
       id: socket.id,
       name: playerName,
-      avatarColor: avatarColor(playerName)
+      avatarColor: avatarColor(playerName),
+      role: "admin"
     };
 
     rooms.set(roomID, {
       players: new Map([[socket.id, player]]),
-      createdAt: Date.now()
+      visibility: "private",
+      maxPlayers: MAX_PLAYERS_PER_ROOM,
+      createdAt: Date.now(),
+      game: createGameState()
     });
 
     socket.join(roomID);
     currentRoom = roomID;
 
-    console.log(`Room ${roomID} created by ${playerName}`);
+    console.log(`Private room ${roomID} created by ${playerName}`);
 
     if (typeof callback === "function") {
       callback({ success: true, roomID, player });
@@ -73,7 +318,6 @@ io.on("connection", (socket) => {
     io.to(roomID).emit("player-list", getRoomPlayers(roomID));
   });
 
-  // ── Join Room ────────────────────────────────────────────────────────────────
   socket.on("join-room", ({ roomID, playerName }, callback) => {
     const room = rooms.get(roomID);
 
@@ -84,15 +328,14 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const player = {
-      id: socket.id,
-      name: playerName,
-      avatarColor: avatarColor(playerName)
-    };
+    if (room.players.size >= room.maxPlayers) {
+      if (typeof callback === "function") {
+        callback({ success: false, error: `Room is full (${room.maxPlayers}/${room.maxPlayers} players).` });
+      }
+      return;
+    }
 
-    room.players.set(socket.id, player);
-    socket.join(roomID);
-    currentRoom = roomID;
+    const player = addPlayerToRoom(roomID, playerName);
 
     console.log(`${playerName} joined room ${roomID}`);
 
@@ -104,13 +347,78 @@ io.on("connection", (socket) => {
     io.to(roomID).emit("player-list", getRoomPlayers(roomID));
   });
 
-  // ── Chat Messages (room-scoped) ─────────────────────────────────────────────
-  socket.on("message", (data) => {
+  socket.on("start-game", (callback) => {
     if (!currentRoom) return;
-    socket.to(currentRoom).emit("message", data);
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+
+    const player = room.players.get(socket.id);
+    if (!player || player.role !== "admin") {
+      return typeof callback === "function" && callback({ success: false, error: "Only the admin can start the game." });
+    }
+
+    if (room.players.size < 2) {
+      return typeof callback === "function" && callback({ success: false, error: "Need at least 2 players to start." });
+    }
+
+    startNextTurn(currentRoom);
+
+    if (typeof callback === "function") {
+      callback({ success: true });
+    }
   });
 
-  // ── Drawing Events (room-scoped) ────────────────────────────────────────────
+  socket.on("choose-word", ({ word }, callback) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+
+    const game = room.game;
+    if (game.state !== "choosing" || game.currentDrawer !== socket.id) {
+      return typeof callback === "function" && callback({ success: false, error: "Not your turn to choose." });
+    }
+
+    const validChoice = game.wordChoices.find(c => c.word === word);
+    if (!validChoice) {
+      return typeof callback === "function" && callback({ success: false, error: "Invalid word choice." });
+    }
+
+    startDrawingPhase(currentRoom, word);
+
+    const player = room.players.get(socket.id);
+    const hint = word.replace(/[a-zA-Z]/g, "_");
+    console.log(`Word chosen in room ${currentRoom}: "${word}" by ${player?.name}`);
+
+    if (typeof callback === "function") {
+      callback({ success: true });
+    }
+
+    io.to(currentRoom).emit("message", {
+      text: `${player?.name} has chosen a word! Start guessing! (${hint})`,
+      type: "system"
+    });
+  });
+
+  socket.on("leave-room", () => {
+    if (currentRoom && rooms.has(currentRoom)) {
+      const roomToLeave = currentRoom;
+      handlePlayerLeave(roomToLeave);
+      socket.leave(roomToLeave);
+      currentRoom = null;
+    }
+  });
+
+  socket.on("message", (data) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    const player = room?.players.get(socket.id);
+    socket.to(currentRoom).emit("message", {
+      ...data,
+      senderName: player?.name,
+      senderId: socket.id,
+    });
+  });
+
   socket.on("draw", (data) => {
     if (!currentRoom) return;
     socket.to(currentRoom).emit("draw", data);
@@ -131,25 +439,43 @@ io.on("connection", (socket) => {
     socket.to(currentRoom).emit("fill", data);
   });
 
-  // ── Disconnect & Cleanup ────────────────────────────────────────────────────
+  function handlePlayerLeave(roomID) {
+    const room = rooms.get(roomID);
+    if (!room) return;
+
+    const player = room.players.get(socket.id);
+    const playerName = player ? player.name : "A player";
+    const wasAdmin = player?.role === "admin";
+
+    room.players.delete(socket.id);
+
+    if (wasAdmin && room.players.size > 0) {
+      const nextAdmin = room.players.values().next().value;
+      nextAdmin.role = "admin";
+      io.to(roomID).emit("message", {
+        text: `${nextAdmin.name} is now the Room Admin.`,
+        type: "system"
+      });
+    }
+
+    if (room.game.currentDrawer === socket.id && (room.game.state === "drawing" || room.game.state === "choosing")) {
+      io.to(roomID).emit("message", { text: `The artist left! Ending turn.`, type: "system" });
+      endTurn(roomID, "drawer-left");
+    }
+
+    io.to(roomID).emit("message", { text: `${playerName} left the room.`, type: "system" });
+    io.to(roomID).emit("player-list", getRoomPlayers(roomID));
+
+    if (room.players.size === 0) {
+      rooms.delete(roomID);
+      console.log(`Room ${roomID} deleted (empty)`);
+    }
+  }
+
   socket.on("disconnect", () => {
     console.log("Socket disconnected:", socket.id);
-
     if (currentRoom && rooms.has(currentRoom)) {
-      const room = rooms.get(currentRoom);
-      const player = room.players.get(socket.id);
-      const playerName = player ? player.name : "A player";
-
-      room.players.delete(socket.id);
-
-      io.to(currentRoom).emit("message", { text: `${playerName} left the room.`, type: "system" });
-      io.to(currentRoom).emit("player-list", getRoomPlayers(currentRoom));
-
-      // If room is empty, clean it up
-      if (room.players.size === 0) {
-        rooms.delete(currentRoom);
-        console.log(`Room ${currentRoom} deleted (empty)`);
-      }
+      handlePlayerLeave(currentRoom);
     }
   });
 });

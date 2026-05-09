@@ -1,13 +1,14 @@
 import type { DrawingMode } from '../types';
 
 const PRESET_COLORS = [
-  { value: 'primary', className: 'color-primary', style: undefined },
-  { value: '#ff3b30', className: '', style: { backgroundColor: '#ff3b30' } },
-  { value: '#ff9500', className: '', style: { backgroundColor: '#ff9500' } },
-  { value: '#4cd964', className: '', style: { backgroundColor: '#4cd964' } },
-  { value: '#5ac8fa', className: '', style: { backgroundColor: '#5ac8fa' } },
-  { value: '#007aff', className: '', style: { backgroundColor: '#007aff' } },
-  { value: '#5856d6', className: '', style: { backgroundColor: '#5856d6' } },
+  { value: 'primary', label: '⚫', style: { backgroundColor: '#1a1a2e' } },
+  { value: '#ff3b30', label: '', style: { backgroundColor: '#ff3b30' } },
+  { value: '#ff9500', label: '', style: { backgroundColor: '#ff9500' } },
+  { value: '#4cd964', label: '', style: { backgroundColor: '#4cd964' } },
+  { value: '#5ac8fa', label: '', style: { backgroundColor: '#5ac8fa' } },
+  { value: '#007aff', label: '', style: { backgroundColor: '#007aff' } },
+  { value: '#5856d6', label: '', style: { backgroundColor: '#5856d6' } },
+  { value: '#ffffff', label: '', style: { backgroundColor: '#ffffff' } },
 ];
 
 interface ToolsPanelProps {
@@ -29,7 +30,7 @@ export default function ToolsPanel({
 }: ToolsPanelProps) {
   return (
     <div className="tools-panel">
-      {/* Mode Selector */}
+      
       <div className="tool-group mode-selector">
         <button
           id="mode-brush"
@@ -49,13 +50,12 @@ export default function ToolsPanel({
         </button>
       </div>
 
-      {/* Color Palette */}
       <div className="tool-group">
         <div className="colors">
           {PRESET_COLORS.map((c) => (
             <button
               key={c.value}
-              className={`color-btn ${c.className} ${color === c.value ? 'active' : ''}`}
+              className={`color-btn ${color === c.value ? 'active' : ''}`}
               style={c.style}
               data-color={c.value}
               onClick={() => onColorChange(c.value)}
@@ -65,13 +65,12 @@ export default function ToolsPanel({
             type="color"
             id="color-picker"
             className="color-picker"
-            value={color.startsWith('#') ? color : '#ffffff'}
+            value={color.startsWith('#') ? color : '#000000'}
             onChange={(e) => onColorChange(e.target.value)}
           />
         </div>
       </div>
 
-      {/* Brush Size */}
       <div className="tool-group size-group">
         <label>
           Brush Size (<span id="brush-size-val">{brushSize}</span>px)
@@ -86,7 +85,6 @@ export default function ToolsPanel({
         />
       </div>
 
-      {/* Actions */}
       <div className="actions">
         <div className="action-row">
           <button id="undo-btn" className="action-btn secondary-btn" title="Undo" onClick={onUndo}>

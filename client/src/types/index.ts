@@ -10,6 +10,7 @@ export interface DrawEvent {
 export interface ChatMessageData {
   text: string;
   senderId: string;
+  senderName?: string;
 }
 
 export interface FillEvent {
@@ -24,13 +25,32 @@ export interface DisplayMessage {
   id: string;
   text: string;
   type: 'self' | 'other' | 'system';
+  senderName?: string;
 }
 
 export interface Player {
   id: string;
   name: string;
   avatarColor: string;
+  role: 'admin' | 'player';
 }
 
 export type DrawingMode = 'brush' | 'fill';
 export type ThemeMode = 'dark' | 'light';
+export type GamePhase = 'waiting' | 'choosing' | 'drawing' | 'roundEnd' | 'gameOver';
+
+export interface WordChoice {
+  word: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+export interface GameState {
+  state: GamePhase;
+  drawerId?: string;
+  drawerName?: string;
+  round?: number;
+  hint?: string;
+  wordLength?: number;
+  currentWord?: string;
+  timeLeft?: number;
+}
