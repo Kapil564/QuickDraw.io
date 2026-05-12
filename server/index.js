@@ -18,6 +18,25 @@ const io = new Server(httpServer, {
 
 const rooms = new Map();
 
+/**
+ * Levenshtein distance — counts minimum single-character edits
+ * (insert, delete, substitute) to turn string `a` into string `b`.
+ */
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 const MAX_PLAYERS_PER_ROOM = 8;
 const WORD_CHOOSE_TIMEOUT = 15000; 
 const ROUND_DRAW_TIMEOUT = 60000; 
@@ -411,7 +430,50 @@ io.on("connection", (socket) => {
   socket.on("message", (data) => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
-    const player = room?.players.get(socket.id);
+    if (!room) return;
+    const player = room.players.get(socket.id);
+    const game = room.game;
+
+    // During drawing phase, check guesses from non-drawers
+    if (
+      game.state === "drawing" &&
+      game.currentWord &&
+      game.currentDrawer !== socket.id
+    ) {
+      const guess = data.text.trim().toLowerCase();
+      const answer = game.currentWord.toLowerCase();
+
+      // --- Exact match → correct guess ---
+      if (guess === answer) {
+        io.to(currentRoom).emit("message", {
+          text: `🎉 ${player?.name || "Someone"} guessed the word!`,
+          type: "correct-guess",
+          guesserName: player?.name,
+          guesserId: socket.id,
+        });
+        return;
+      }
+
+      // --- Close guess → private hint to the guesser ---
+      const dist = levenshtein(guess, answer);
+      const threshold = answer.length <= 4 ? 1 : 2;
+      if (dist > 0 && dist <= threshold) {
+        // Relay the message normally to others first
+        socket.to(currentRoom).emit("message", {
+          ...data,
+          senderName: player?.name,
+          senderId: socket.id,
+        });
+        // Then send a private close-guess hint only to the guesser
+        socket.emit("message", {
+          text: `🔥 You're so close!`,
+          type: "close-guess",
+        });
+        return;
+      }
+    }
+
+    // Normal message relay
     socket.to(currentRoom).emit("message", {
       ...data,
       senderName: player?.name,
@@ -421,21 +483,34 @@ io.on("connection", (socket) => {
 
   socket.on("draw", (data) => {
     if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    // Only the current drawer may broadcast drawing events
+    if (room.game.currentDrawer !== socket.id) return;
     socket.to(currentRoom).emit("draw", data);
   });
 
   socket.on("clear", () => {
     if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (room.game.currentDrawer !== socket.id) return;
     socket.to(currentRoom).emit("clear");
   });
 
   socket.on("undo", (data) => {
     if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (room.game.currentDrawer !== socket.id) return;
     socket.to(currentRoom).emit("undo", data);
   });
 
   socket.on("fill", (data) => {
     if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (room.game.currentDrawer !== socket.id) return;
     socket.to(currentRoom).emit("fill", data);
   });
 

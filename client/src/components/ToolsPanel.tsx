@@ -20,6 +20,7 @@ interface ToolsPanelProps {
   onModeChange: (mode: DrawingMode) => void;
   onUndo: () => void;
   onClear: () => void;
+  disabled?: boolean;
 }
 
 export default function ToolsPanel({
@@ -27,9 +28,10 @@ export default function ToolsPanel({
   brushSize, onBrushSizeChange,
   mode, onModeChange,
   onUndo, onClear,
+  disabled = false,
 }: ToolsPanelProps) {
   return (
-    <div className="tools-panel">
+    <div className="tools-panel" style={disabled ? { opacity: 0.45, pointerEvents: 'none', position: 'relative' } : {}}>
       
       <div className="tool-group mode-selector">
         <button

@@ -839,6 +839,40 @@ button {
   margin-left: 0;
 }
 
+/* Drawer indicator on avatar */
+.player-avatar.is-drawing {
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px var(--pink), 0 0 12px rgba(255, 107, 157, 0.5);
+  z-index: 3;
+  animation: drawerPulse 1.5s ease-in-out infinite;
+}
+
+.drawer-pencil {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+  animation: pencilBounce 1s ease-in-out infinite;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+}
+
+@keyframes drawerPulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--pink), 0 0 8px rgba(255, 107, 157, 0.4); }
+  50% { box-shadow: 0 0 0 4px var(--pink), 0 0 16px rgba(255, 107, 157, 0.6); }
+}
+
+@keyframes pencilBounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-3px); }
+}
+
+/* Spectator cursor (non-drawer) */
+.cursor-default {
+  cursor: default !important;
+}
 /* ═══════════════════════════════════════════════════════════════════════════
    GAME UI — Word Selection, Status Bar, Start Button
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -1260,6 +1294,23 @@ body:not(.light-mode) .game-status-bar {
   font-style: italic;
   text-align: center;
   font-size: 12px;
+}
+.message.correct {
+  background-color: rgba(105, 224, 165, 0.2);
+  border-color: var(--mint);
+  color: #1b7a42;
+  font-weight: 800;
+  text-align: center;
+  animation: correctPop 0.4s ease;
+}
+body:not(.light-mode) .message.correct {
+  background-color: rgba(105, 224, 165, 0.15);
+  color: #69E0A5;
+}
+@keyframes correctPop {
+  0% { transform: scale(0.95); opacity: 0; }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .chat-input-form {

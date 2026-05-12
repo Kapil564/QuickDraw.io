@@ -23,6 +23,18 @@ export default function ChatPanel({ playerName }: ChatPanelProps) {
     const onMessage = (data: any) => {
       if (typeof data === 'string') {
         setMessages(prev => [...prev, { id: String(++msgIdCounter), text: data, type: 'system' }]);
+      } else if (data.type === 'correct-guess') {
+        setMessages(prev => [...prev, {
+          id: String(++msgIdCounter),
+          text: data.text,
+          type: 'correct',
+        }]);
+      } else if (data.type === 'close-guess') {
+        setMessages(prev => [...prev, {
+          id: String(++msgIdCounter),
+          text: data.text,
+          type: 'close',
+        }]);
       } else if (data.type === 'system') {
         setMessages(prev => [...prev, { id: String(++msgIdCounter), text: data.text, type: 'system' }]);
       } else {

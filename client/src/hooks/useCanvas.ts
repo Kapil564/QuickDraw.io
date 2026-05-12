@@ -8,9 +8,10 @@ interface UseCanvasOptions {
   brushSize: number;
   mode: DrawingMode;
   theme: ThemeMode;
+  canDraw: boolean;
 }
 
-export function useCanvas({ socket, color, brushSize, mode }: UseCanvasOptions) {
+export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvasOptions) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -193,6 +194,9 @@ export function useCanvas({ socket, color, brushSize, mode }: UseCanvasOptions) 
 
   useEffect(() => {
     if (!mounted) return;
+    // Non-drawers: no interaction handlers attached
+    if (!canDraw) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -285,7 +289,7 @@ export function useCanvas({ socket, color, brushSize, mode }: UseCanvasOptions) 
       canvas.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
     };
-  }, [mounted, drawSegment, fillCanvas, saveHistory, socket]);
+  }, [mounted, canDraw, drawSegment, fillCanvas, saveHistory, socket]);
 
   useEffect(() => {
     function onRemoteDraw(data: DrawEvent) {

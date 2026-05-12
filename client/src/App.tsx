@@ -29,6 +29,7 @@ export default function App() {
 
   const { canvasRef, containerRef, undo, clearCanvas } = useCanvas({
     socket, color, brushSize, mode, theme,
+    canDraw: gameState.drawerId === socket.id,
   });
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -140,7 +141,7 @@ export default function App() {
       ) : (
         <main className="main-content">
           <div className="board-area">
-            <DrawingBoard canvasRef={canvasRef} containerRef={containerRef} mode={mode}>
+            <DrawingBoard canvasRef={canvasRef} containerRef={containerRef} mode={mode} canDraw={isDrawer}>
               
               <div className="room-header floating-room-header">
                 <div className="room-info">
@@ -153,11 +154,12 @@ export default function App() {
                   {players.map(p => (
                     <div
                       key={p.id}
-                      className={`player-avatar ${p.role === 'admin' ? 'is-admin' : ''}`}
+                      className={`player-avatar ${p.role === 'admin' ? 'is-admin' : ''} ${gameState.drawerId === p.id ? 'is-drawing' : ''}`}
                       style={{ backgroundColor: p.avatarColor }}
-                      title={`${p.name}${p.role === 'admin' ? ' (Admin)' : ''}`}
+                      title={`${p.name}${p.role === 'admin' ? ' (Admin)' : ''}${gameState.drawerId === p.id ? ' ✏️ Drawing' : ''}`}
                     >
-                      {p.role === 'admin' && <span className="admin-crown">👑</span>}
+                      {gameState.drawerId === p.id && <span className="drawer-pencil">✏️</span>}
+                      {p.role === 'admin' && gameState.drawerId !== p.id && <span className="admin-crown">👑</span>}
                       {p.name.charAt(0).toUpperCase()}
                     </div>
                   ))}
@@ -203,6 +205,7 @@ export default function App() {
               brushSize={brushSize} onBrushSizeChange={setBrushSize}
               mode={mode} onModeChange={setMode}
               onUndo={undo} onClear={clearCanvas}
+              disabled={!isDrawer}
             />
           </div>
           <ChatPanel playerName={player?.name} />

@@ -5,11 +5,12 @@ interface DrawingBoardProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   mode: DrawingMode;
+  canDraw?: boolean;
   children?: ReactNode;
 }
 
-export default function DrawingBoard({ canvasRef, containerRef, mode, children }: DrawingBoardProps) {
-  const cursorClass = mode === 'fill' ? 'cursor-fill' : 'cursor-brush';
+export default function DrawingBoard({ canvasRef, containerRef, mode, canDraw = true, children }: DrawingBoardProps) {
+  const cursorClass = !canDraw ? 'cursor-default' : mode === 'fill' ? 'cursor-fill' : 'cursor-brush';
 
   return (
     <div className="canvas-container" ref={containerRef}>

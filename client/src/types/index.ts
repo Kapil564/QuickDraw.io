@@ -24,7 +24,7 @@ export interface UndoEvent {
 export interface DisplayMessage {
   id: string;
   text: string;
-  type: 'self' | 'other' | 'system';
+  type: 'self' | 'other' | 'system' | 'correct' | 'close';
   senderName?: string;
 }
 
