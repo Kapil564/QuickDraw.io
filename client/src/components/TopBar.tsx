@@ -10,7 +10,7 @@ export default function TopBar({ theme, onToggleTheme }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="logo">
-        <span className="logo-pill">Scribble</span>
+        <span className="logo-pill">QuickDraw</span>
         <span className="logo-text">Board</span>
       </div>
       <div className="topbar-right">

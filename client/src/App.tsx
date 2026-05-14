@@ -8,7 +8,8 @@ import ToolsPanel from './components/ToolsPanel';
 import ChatPanel from './components/ChatPanel';
 import Lobby from './components/Lobby';
 import WordSelection from './components/WordSelection';
-import type { DrawingMode, Player, GameState, WordChoice } from './types';
+import Scoreboard from './components/Scoreboard';
+import type { DrawingMode, Player, GameState, WordChoice, ScoreEntry } from './types';
 
 export default function App() {
   const { socket } = useSocketContext();
@@ -22,6 +23,7 @@ export default function App() {
   const [wordChoices, setWordChoices] = useState<WordChoice[] | null>(null);
   const [wordTimeLimit, setWordTimeLimit] = useState(15000);
   const [localTimeLeft, setLocalTimeLeft] = useState<number | null>(null);
+  const [scoreboard, setScoreboard] = useState<ScoreEntry[]>([]);
 
   const [color, setColor] = useState('primary');
   const [brushSize, setBrushSize] = useState(5);
@@ -48,10 +50,8 @@ export default function App() {
 
     socket.on('game-state', (state: GameState) => {
       setGameState(state);
-      
-      if (state.state !== 'choosing') {
-        setWordChoices(null);
-      }
+      if (state.scoreboard) setScoreboard(state.scoreboard);
+      if (state.state !== 'choosing') setWordChoices(null);
       if (state.timeLeft !== undefined) {
         setLocalTimeLeft(state.timeLeft);
       } else {
@@ -64,11 +64,16 @@ export default function App() {
       setGameState(prev => ({ ...prev, state: 'drawing', currentWord: word }));
     });
 
+    socket.on('score-update', ({ scoreboard: sb }: { scoreboard: ScoreEntry[] }) => {
+      setScoreboard(sb);
+    });
+
     return () => {
       socket.off('player-list');
       socket.off('word-choices');
       socket.off('game-state');
       socket.off('word-assigned');
+      socket.off('score-update');
     };
   }, [socket]);
 
@@ -106,6 +111,7 @@ export default function App() {
     setPlayers([]);
     setGameState({ state: 'waiting' });
     setWordChoices(null);
+    setScoreboard([]);
     window.history.pushState({}, '', window.location.pathname);
   };
 
@@ -131,6 +137,7 @@ export default function App() {
   const isChoosing = gameState.state === 'choosing';
   const isDrawing = gameState.state === 'drawing';
   const isRoundEnd = gameState.state === 'roundEnd';
+  const isGameOver = gameState.state === 'gameOver';
 
   return (
     <div className="app-container">
@@ -151,25 +158,40 @@ export default function App() {
                   <button onClick={exitRoom} className="exit-btn" title="Exit Room">🚪</button>
                 </div>
                 <div className="players-list">
-                  {players.map(p => (
-                    <div
-                      key={p.id}
-                      className={`player-avatar ${p.role === 'admin' ? 'is-admin' : ''} ${gameState.drawerId === p.id ? 'is-drawing' : ''}`}
-                      style={{ backgroundColor: p.avatarColor }}
-                      title={`${p.name}${p.role === 'admin' ? ' (Admin)' : ''}${gameState.drawerId === p.id ? ' ✏️ Drawing' : ''}`}
-                    >
-                      {gameState.drawerId === p.id && <span className="drawer-pencil">✏️</span>}
-                      {p.role === 'admin' && gameState.drawerId !== p.id && <span className="admin-crown">👑</span>}
-                      {p.name.charAt(0).toUpperCase()}
-                    </div>
-                  ))}
+                  {players.map(p => {
+                    const scoreEntry = scoreboard.find(s => s.id === p.id);
+                    return (
+                      <div
+                        key={p.id}
+                        className={`player-avatar-wrap`}
+                        title={`${p.name}${p.role === 'admin' ? ' (Admin)' : ''}${gameState.drawerId === p.id ? ' ✏️ Drawing' : ''} — ${scoreEntry?.score ?? 0} pts`}
+                      >
+                        <div
+                          className={`player-avatar ${p.role === 'admin' ? 'is-admin' : ''} ${gameState.drawerId === p.id ? 'is-drawing' : ''}`}
+                          style={{ backgroundColor: p.avatarColor }}
+                        >
+                          {gameState.drawerId === p.id && <span className="drawer-pencil">✏️</span>}
+                          {p.role === 'admin' && gameState.drawerId !== p.id && <span className="admin-crown">👑</span>}
+                          {p.name.charAt(0).toUpperCase()}
+                        </div>
+                        {scoreboard.length > 0 && (
+                          <span className="avatar-score">{scoreEntry?.score ?? 0}</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               {!isWaiting && (
                 <div className="game-status-bar">
                   {isChoosing && !isDrawer && (
-                    <span>🎨 <strong>{gameState.drawerName}</strong> is choosing a word...</span>
+                    <span>
+                      🎨 <strong>{gameState.drawerName}</strong> is choosing a word
+                      {gameState.currentTurn != null && gameState.totalTurnsPerRound != null && (
+                        <span className="status-turn-tag"> (Turn {gameState.currentTurn}/{gameState.totalTurnsPerRound})</span>
+                      )}
+                    </span>
                   )}
                   {isDrawing && isDrawer && (
                     <span>✏️ Draw: <strong className="secret-word">{gameState.currentWord}</strong></span>
@@ -191,6 +213,23 @@ export default function App() {
                   choices={wordChoices}
                   timeLimit={wordTimeLimit}
                   onChoose={chooseWord}
+                />
+              )}
+
+              {(isRoundEnd || isGameOver) && (
+                <Scoreboard
+                  isRoundEnd={isRoundEnd}
+                  isGameOver={isGameOver}
+                  scoreboard={scoreboard}
+                  currentWord={gameState.currentWord}
+                  round={gameState.round}
+                  maxRounds={gameState.maxRounds}
+                  currentTurn={gameState.currentTurn}
+                  totalTurnsPerRound={gameState.totalTurnsPerRound}
+                  winnerName={gameState.winnerName}
+                  myId={socket.id}
+                  isAdmin={isAdmin}
+                  onPlayAgain={startGame}
                 />
               )}
 

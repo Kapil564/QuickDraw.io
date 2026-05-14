@@ -43,16 +43,50 @@ const ROUND_DRAW_TIMEOUT = 60000;
 
 function createGameState() {
   return {
-    state: "waiting",    
-    currentDrawer: null, 
-    currentWord: null,   
-    wordChoices: [],     
+    state: "waiting",
+    currentDrawer: null,
+    currentWord: null,
+    wordChoices: [],
     round: 0,
+    maxRounds: 3,
+    currentTurn: 0,         // which sub-turn within the current round (1-based)
     usedWords: new Set(),
-    chooseTimer: null,   
+    scores: new Map(),
+    correctGuessers: new Set(),
+    roundStartTime: null,
+    chooseTimer: null,
     roundTimer: null,
     timeLeft: 0,
   };
+}
+
+function buildScoreboard(room) {
+  const game = room.game;
+  return Array.from(room.players.values())
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      score: game.scores.get(p.id) || 0,
+      avatarColor: p.avatarColor,
+      role: p.role,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+function endGame(roomID) {
+  const room = rooms.get(roomID);
+  if (!room) return;
+  const game = room.game;
+  if (game.roundTimer) { clearTimeout(game.roundTimer); game.roundTimer = null; }
+  if (game.chooseTimer) { clearTimeout(game.chooseTimer); game.chooseTimer = null; }
+  game.state = "gameOver";
+  const scoreboard = buildScoreboard(room);
+  const winner = scoreboard[0];
+  io.to(roomID).emit("game-state", { state: "gameOver", scoreboard, winnerName: winner?.name });
+  io.to(roomID).emit("message", {
+    text: `🏆 Game Over! ${winner?.name || "Nobody"} wins with ${winner?.score || 0} points!`,
+    type: "system",
+  });
 }
 
 function generateRoomID() {
@@ -103,13 +137,28 @@ function startNextTurn(roomID) {
     const currentIndex = players.findIndex(p => p.id === game.currentDrawer);
     if (currentIndex !== -1) {
       nextIndex = (currentIndex + 1) % players.length;
-      if (nextIndex === 0) game.round += 1;
+      if (nextIndex === 0) {
+        game.round += 1;
+        game.currentTurn = 1; // reset sub-turn for new round
+      } else {
+        game.currentTurn += 1;
+      }
     } else {
       game.round += 1;
+      game.currentTurn = 1;
     }
   } else {
     game.round = 1;
+    game.currentTurn = 1;
   }
+
+  // Game over after maxRounds full cycles
+  if (game.round > game.maxRounds) {
+    endGame(roomID);
+    return;
+  }
+
+  const totalTurnsPerRound = players.length;
 
   const nextDrawer = players[nextIndex];
   game.currentDrawer = nextDrawer.id;
@@ -134,10 +183,13 @@ function startNextTurn(roomID) {
     drawerId: nextDrawer.id,
     drawerName: nextDrawer.name,
     round: game.round,
+    maxRounds: game.maxRounds,
+    currentTurn: game.currentTurn,
+    totalTurnsPerRound,
   });
 
   io.to(roomID).emit("message", {
-    text: `🎮 Round ${game.round}! ${nextDrawer.name} is choosing a word...`,
+    text: `🎮 Round ${game.round} (${game.currentTurn}/${totalTurnsPerRound})! ${nextDrawer.name} is choosing a word...`,
     type: "system"
   });
 
@@ -169,16 +221,23 @@ function startDrawingPhase(roomID, word) {
   game.state = "drawing";
   game.wordChoices = [];
   game.timeLeft = ROUND_DRAW_TIMEOUT / 1000;
+  game.correctGuessers = new Set();
+  game.roundStartTime = Date.now();
 
   const hint = word.replace(/[a-zA-Z]/g, "_");
 
   io.to(game.currentDrawer).emit("word-assigned", { word });
+
+  const totalTurnsPerRound = room.players.size;
 
   io.to(roomID).emit("game-state", {
     state: "drawing",
     drawerId: game.currentDrawer,
     drawerName: player?.name || "Unknown",
     round: game.round,
+    maxRounds: game.maxRounds,
+    currentTurn: game.currentTurn,
+    totalTurnsPerRound,
     hint,
     wordLength: word.length,
     timeLeft: game.timeLeft
@@ -196,32 +255,36 @@ function endTurn(roomID, reason) {
   if (!room) return;
   const game = room.game;
 
-  if (game.roundTimer) {
-    clearTimeout(game.roundTimer);
-    game.roundTimer = null;
-  }
-  if (game.chooseTimer) {
-    clearTimeout(game.chooseTimer);
-    game.chooseTimer = null;
-  }
+  // Guard against double-invocation
+  if (game.state === "roundEnd" || game.state === "gameOver") return;
+
+  if (game.roundTimer) { clearTimeout(game.roundTimer); game.roundTimer = null; }
+  if (game.chooseTimer) { clearTimeout(game.chooseTimer); game.chooseTimer = null; }
 
   game.state = "roundEnd";
 
+  const scoreboard = buildScoreboard(room);
+  const reasonMsg = reason === "time-up"
+    ? `⏰ Time's up! The word was: "${game.currentWord}"`
+    : reason === "all-guessed"
+    ? `🎯 Everyone guessed it! The word was: "${game.currentWord}"`
+    : `The word was: "${game.currentWord}"`;
+
   io.to(roomID).emit("game-state", {
     state: "roundEnd",
-    currentWord: game.currentWord
+    currentWord: game.currentWord,
+    round: game.round,
+    maxRounds: game.maxRounds,
+    currentTurn: game.currentTurn,
+    totalTurnsPerRound: room.players.size,
+    scoreboard,
   });
 
-  io.to(roomID).emit("message", {
-    text: `Time's up! The word was: ${game.currentWord}`,
-    type: "system"
-  });
+  io.to(roomID).emit("message", { text: reasonMsg, type: "system" });
 
   setTimeout(() => {
-    if (rooms.has(roomID)) {
-      startNextTurn(roomID);
-    }
-  }, 5000);
+    if (rooms.has(roomID)) startNextTurn(roomID);
+  }, 7000);
 }
 
 io.on("connection", (socket) => {
@@ -245,6 +308,11 @@ io.on("connection", (socket) => {
     room.players.set(socket.id, player);
     socket.join(roomID);
     currentRoom = roomID;
+
+    // Initialize score for new player
+    if (!room.game.scores.has(socket.id)) {
+      room.game.scores.set(socket.id, 0);
+    }
 
     return player;
   }
@@ -380,6 +448,15 @@ io.on("connection", (socket) => {
       return typeof callback === "function" && callback({ success: false, error: "Need at least 2 players to start." });
     }
 
+    // Reset game state if restarting after game over
+    if (room.game.state === "gameOver") {
+      room.game = createGameState();
+      // Re-initialize scores for all current players
+      for (const id of room.players.keys()) {
+        room.game.scores.set(id, 0);
+      }
+    }
+
     startNextTurn(currentRoom);
 
     if (typeof callback === "function") {
@@ -445,12 +522,45 @@ io.on("connection", (socket) => {
 
       // --- Exact match → correct guess ---
       if (guess === answer) {
+        // Prevent double-guessing
+        if (game.correctGuessers.has(socket.id)) return;
+
+        // Time-based score: 50–500 pts for guesser, 50 bonus for drawer
+        const elapsed = (Date.now() - (game.roundStartTime || Date.now())) / 1000;
+        const timeRemaining = Math.max(0, (ROUND_DRAW_TIMEOUT / 1000) - elapsed);
+        const guesserScore = Math.max(50, Math.floor(500 * (timeRemaining / (ROUND_DRAW_TIMEOUT / 1000))));
+        const drawerBonus = 50;
+
+        game.scores.set(socket.id, (game.scores.get(socket.id) || 0) + guesserScore);
+        if (game.currentDrawer) {
+          game.scores.set(game.currentDrawer, (game.scores.get(game.currentDrawer) || 0) + drawerBonus);
+        }
+        game.correctGuessers.add(socket.id);
+
+        const scoreboard = buildScoreboard(room);
+
         io.to(currentRoom).emit("message", {
-          text: `🎉 ${player?.name || "Someone"} guessed the word!`,
+          text: `🎉 ${player?.name || "Someone"} guessed the word! (+${guesserScore} pts)`,
           type: "correct-guess",
           guesserName: player?.name,
           guesserId: socket.id,
+          pointsEarned: guesserScore,
         });
+
+        io.to(currentRoom).emit("score-update", { scoreboard });
+
+        // End turn early if everyone guessed
+        const nonDrawers = Array.from(room.players.keys()).filter(id => id !== game.currentDrawer);
+        if (game.correctGuessers.size >= nonDrawers.length && nonDrawers.length > 0) {
+          io.to(currentRoom).emit("message", { text: `🎯 Everyone guessed it! Ending round early...`, type: "system" });
+          if (game.roundTimer) { clearTimeout(game.roundTimer); game.roundTimer = null; }
+          setTimeout(() => {
+            if (rooms.has(currentRoom) && room.game.state === "drawing") {
+              endTurn(currentRoom, "all-guessed");
+            }
+          }, 2000);
+        }
+
         return;
       }
 

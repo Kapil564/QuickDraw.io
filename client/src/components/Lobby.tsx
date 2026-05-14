@@ -111,7 +111,7 @@ export default function Lobby({ onJoin, initialRoomID }: LobbyProps) {
         <div className="sticker sticker-br">🎉</div>
 
         <div className="card-header">
-          <h2 className="title">Let's <span className="highlight">Scribble!</span></h2>
+          <h2 className="title">Let's <span className="highlight">QuickDraw!</span></h2>
           <p className="subtitle">Draw, guess & have a blast with friends 🎉</p>
         </div>
 

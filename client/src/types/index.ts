@@ -35,6 +35,14 @@ export interface Player {
   role: 'admin' | 'player';
 }
 
+export interface ScoreEntry {
+  id: string;
+  name: string;
+  score: number;
+  avatarColor: string;
+  role: 'admin' | 'player';
+}
+
 export type DrawingMode = 'brush' | 'fill';
 export type ThemeMode = 'dark' | 'light';
 export type GamePhase = 'waiting' | 'choosing' | 'drawing' | 'roundEnd' | 'gameOver';
@@ -49,8 +57,13 @@ export interface GameState {
   drawerId?: string;
   drawerName?: string;
   round?: number;
+  maxRounds?: number;
+  currentTurn?: number;
+  totalTurnsPerRound?: number;
   hint?: string;
   wordLength?: number;
   currentWord?: string;
   timeLeft?: number;
+  scoreboard?: ScoreEntry[];
+  winnerName?: string;
 }
