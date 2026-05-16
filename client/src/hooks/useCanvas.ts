@@ -2,6 +2,9 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { DrawEvent, DrawingMode, FillEvent, UndoEvent, ThemeMode } from '../types';
 
+// Clamp helper
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
 interface UseCanvasOptions {
   socket: Socket;
   color: string;
@@ -22,6 +25,9 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
   const lastY = useRef(0);
   const history = useRef<string[]>([]);
 
+  // Cached 2D context — avoids repeated getContext() calls per segment
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+
   const colorRef = useRef(color);
   const brushSizeRef = useRef(brushSize);
   const modeRef = useRef(mode);
@@ -29,6 +35,44 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { brushSizeRef.current = brushSize; }, [brushSize]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  // --- Outbound draw batching ---
+  // Instead of emitting on every mousemove, accumulate segments and flush
+  // them once per animation frame.
+  const pendingEmits = useRef<DrawEvent[]>([]);
+  const rafEmitId = useRef<number>(0);
+
+  const flushEmits = useCallback(() => {
+    if (pendingEmits.current.length === 0) return;
+    // Emit all queued segments in one tick
+    pendingEmits.current.forEach(seg => socket.emit('draw', seg));
+    pendingEmits.current = [];
+    rafEmitId.current = 0;
+  }, [socket]);
+
+  const scheduleEmit = useCallback((seg: DrawEvent) => {
+    pendingEmits.current.push(seg);
+    if (rafEmitId.current === 0) {
+      rafEmitId.current = requestAnimationFrame(flushEmits);
+    }
+  }, [flushEmits]);
+
+  // --- Remote draw batching ---
+  const remotePending = useRef<DrawEvent[]>([]);
+  const rafRemoteId = useRef<number>(0);
+
+  // --- History: defer toDataURL so it doesn't block the first stroke ---
+  const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveHistoryDeferred = useCallback(() => {
+    if (historyTimer.current) return; // already scheduled
+    historyTimer.current = setTimeout(() => {
+      historyTimer.current = null;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      history.current.push(canvas.toDataURL());
+      if (history.current.length > 20) history.current.shift();
+    }, 100);
+  }, []);
 
   useEffect(() => {
     if (canvasRef.current && containerRef.current) {
@@ -48,6 +92,7 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
     return c === 'primary' ? '#1a1a2e' : c;
   }, []);
 
+  // Immediate save (used before undo/clear where we need the snapshot now)
   const saveHistory = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -57,13 +102,12 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
 
   const restoreCanvas = useCallback((dataUrl?: string) => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
+    const ctx = ctxRef.current ?? canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
 
     if (!dataUrl) {
-      
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -73,21 +117,18 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
 
     const img = new Image();
     img.onload = () => {
-      
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
       ctx.scale(dpr, dpr);
     };
     img.src = dataUrl;
   }, []);
 
-    const drawSegment = useCallback(
+  const drawSegment = useCallback(
     (x0: number, y0: number, x1: number, y1: number, lineColor: string, size: number) => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!canvas || !ctx) return;
+      const ctx = ctxRef.current;
+      if (!ctx) return;
 
       ctx.beginPath();
       ctx.moveTo(x0, y0);
@@ -104,9 +145,9 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
   const fillCanvas = useCallback(
     (fillColor: string, emit: boolean) => {
       const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
+      const ctx = ctxRef.current;
       if (!canvas || !ctx) return;
-      
+
       ctx.fillStyle = resolveColor(fillColor);
       ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
       if (emit) socket.emit('fill', { color: fillColor });
@@ -138,7 +179,7 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
   }, [socket, saveHistory]);
 
   useEffect(() => {
-    if (!mounted) return;                       
+    if (!mounted) return;
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
@@ -159,18 +200,19 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
 
       canvas.style.width = cssWidth + 'px';
       canvas.style.height = cssHeight + 'px';
-
       canvas.width = targetW;
       canvas.height = targetH;
 
-      const ctx = canvas.getContext('2d');
+      // (Re-)acquire and cache the context after resize
+      const ctx = canvas.getContext('2d', { willReadFrequently: false });
       if (!ctx) return;
+      ctxRef.current = ctx;
 
       ctx.scale(dpr, dpr);
-
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, cssWidth, cssHeight);
 
+      // Restore previous drawing
       const img = new Image();
       img.onload = () => ctx.drawImage(img, 0, 0, cssWidth, cssHeight);
       img.src = snapshot;
@@ -184,7 +226,7 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
       resizeTimeout = setTimeout(resize, 50);
     });
     observer.observe(container);
-    resize();                                   
+    resize();
 
     return () => {
       observer.disconnect();
@@ -222,7 +264,8 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
     function onDown(e: MouseEvent | TouchEvent) {
       if ('button' in e && e.button !== 0) return;
 
-      saveHistory();
+      // Defer toDataURL so it doesn't block the first stroke render
+      saveHistoryDeferred();
 
       if (modeRef.current === 'fill') {
         fillCanvas(colorRef.current, true);
@@ -234,8 +277,10 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
       lastX.current = x;
       lastY.current = y;
 
+      // Draw the initial dot immediately (local)
       drawSegment(x, y, x, y, colorRef.current, brushSizeRef.current);
-      socket.emit('draw', {
+      // Batch-emit via rAF
+      scheduleEmit({
         x0: x / canvas!.clientWidth,
         y0: y / canvas!.clientHeight,
         x1: x / canvas!.clientWidth,
@@ -252,8 +297,11 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
       const { x, y } = getXY(e);
       if (x === lastX.current && y === lastY.current) return;
 
+      // Draw locally with zero delay
       drawSegment(lastX.current, lastY.current, x, y, colorRef.current, brushSizeRef.current);
-      socket.emit('draw', {
+
+      // Queue emit — flushed once per animation frame
+      scheduleEmit({
         x0: lastX.current / canvas!.clientWidth,
         y0: lastY.current / canvas!.clientHeight,
         x1: x / canvas!.clientWidth,
@@ -268,6 +316,12 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
 
     function onUp() {
       isDrawing.current = false;
+      // Flush any remaining buffered segments immediately on pen-up
+      if (rafEmitId.current) {
+        cancelAnimationFrame(rafEmitId.current);
+        rafEmitId.current = 0;
+        flushEmits();
+      }
     }
 
     const opts: AddEventListenerOptions = { passive: false };
@@ -289,26 +343,40 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
       canvas.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
     };
-  }, [mounted, canDraw, drawSegment, fillCanvas, saveHistory, socket]);
+  }, [mounted, canDraw, drawSegment, fillCanvas, saveHistoryDeferred, scheduleEmit, flushEmits, socket]);
 
   useEffect(() => {
-    function onRemoteDraw(data: DrawEvent) {
+    // Remote draw events are batched via rAF so we don't thrash the canvas
+    // between paint frames.
+    function flushRemote() {
       const c = canvasRef.current;
-      if (!c) return;
-      drawSegment(
-        data.x0 * c.clientWidth,
-        data.y0 * c.clientHeight,
-        data.x1 * c.clientWidth,
-        data.y1 * c.clientHeight,
-        data.color,
-        data.size,
-      );
+      if (!c) { remotePending.current = []; rafRemoteId.current = 0; return; }
+      const batch = remotePending.current;
+      remotePending.current = [];
+      rafRemoteId.current = 0;
+      for (const data of batch) {
+        drawSegment(
+          data.x0 * c.clientWidth,
+          data.y0 * c.clientHeight,
+          data.x1 * c.clientWidth,
+          data.y1 * c.clientHeight,
+          data.color,
+          data.size,
+        );
+      }
+    }
+
+    function onRemoteDraw(data: DrawEvent) {
+      remotePending.current.push(data);
+      if (rafRemoteId.current === 0) {
+        rafRemoteId.current = requestAnimationFrame(flushRemote);
+      }
     }
 
     function onRemoteClear() {
       saveHistory();
       const c = canvasRef.current;
-      const ctx = c?.getContext('2d');
+      const ctx = ctxRef.current;
       if (c && ctx) {
         const dpr = window.devicePixelRatio || 1;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -337,6 +405,8 @@ export function useCanvas({ socket, color, brushSize, mode, canDraw }: UseCanvas
       socket.off('clear', onRemoteClear);
       socket.off('undo', onRemoteUndo);
       socket.off('fill', onRemoteFill);
+      // Cancel any pending remote flush
+      if (rafRemoteId.current) cancelAnimationFrame(rafRemoteId.current);
     };
   }, [socket, drawSegment, saveHistory, restoreCanvas, fillCanvas]);
 

@@ -9,11 +9,17 @@ const app = express();
 const httpServer = createServer(app);
 
 const allowedOrigins = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',') : "*";
-const io = new Server(httpServer, { 
+const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins, 
+    origin: allowedOrigins,
     methods: ["GET", "POST"]
-  }
+  },
+  // Disable per-message deflate: zlib adds CPU overhead & latency on every
+  // draw packet, which is the hot path. Uncompressed small JSON is faster.
+  perMessageDeflate: false,
+  // Keep the connection alive with a tighter heartbeat
+  pingInterval: 10000,
+  pingTimeout: 5000,
 });
 
 const rooms = new Map();
