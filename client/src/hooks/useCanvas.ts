@@ -2,8 +2,7 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { DrawEvent, DrawingMode, FillEvent, UndoEvent, ThemeMode } from '../types';
 
-// Clamp helper
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
 
 interface UseCanvasOptions {
   socket: Socket;
