@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { useSocketContext } from './context/SocketContext';
 import { useTheme } from './hooks/useTheme';
 import { useCanvas } from './hooks/useCanvas';
@@ -250,6 +251,7 @@ export default function App() {
           <ChatPanel playerName={player?.name} />
         </main>
       )}
+      <Analytics />
     </div>
   );
 }
